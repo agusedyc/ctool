@@ -43,6 +43,7 @@ Vol-Backup options:
 
 Dir-Backup options:
   --restart               Restart services after backup (default: stay stopped)
+  --no-images             Skip backing up Docker images (default: images included)
 
 Vol-Restore options:
   --force                 Skip confirmation prompt
@@ -81,6 +82,24 @@ detect_compose_file() {
   done
   err "No compose file found. Use -f to specify one."
   exit 1
+}
+
+# ─── Extract images from compose config ───────────────────────
+get_compose_images() {
+  local compose_file="$1"
+  local images=""
+
+  images=$($_COMPOSE_CMD -f "$compose_file" config --images 2>/dev/null || true)
+
+  if [[ -z "$images" ]]; then
+    local config
+    config=$($_COMPOSE_CMD -f "$compose_file" config --format json 2>/dev/null || true)
+    if [[ -n "$config" ]]; then
+      images=$(echo "$config" | jq -r '.services // {} | to_entries[] | .value.image // empty' 2>/dev/null || true)
+    fi
+  fi
+
+  echo "$images"
 }
 
 # ─── Extract named volumes from compose config ─────────────────
@@ -542,6 +561,7 @@ cmd_cleanup() {
 cmd_dir_backup() {
   local target_dir="$1"
   local auto_restart="${2:-false}"
+  local with_images="${3:-true}"
 
   if [[ -z "$target_dir" ]]; then
     err "Usage: ctool backup <target-directory>"
@@ -616,6 +636,35 @@ cmd_dir_backup() {
       warn "Volume backup failed: ${name}"
     fi
   done <<< "$volumes"
+
+  # Backup Docker images
+  if [[ "$with_images" == "true" ]]; then
+    local raw_images
+    raw_images=$(get_compose_images "$compose_file")
+    local valid_images=()
+
+    while read -r img; do
+      [[ -z "$img" ]] && continue
+      if docker image inspect "$img" &>/dev/null; then
+        valid_images+=("$img")
+      else
+        warn "Image not found locally, skipping: $img"
+      fi
+    done < <(echo "$raw_images" | sort -u)
+
+    if [[ ${#valid_images[@]} -gt 0 ]]; then
+      info "Backing up Docker images (${#valid_images[@]} image(s))..."
+      if docker save "${valid_images[@]}" | gzip > "${staging_dir}/images.tar.gz"; then
+        local img_size
+        img_size=$(stat --printf="%s" "${staging_dir}/images.tar.gz" 2>/dev/null || echo 0)
+        ok "Images backup complete: images.tar.gz ($(numfmt --to=iec-i "$img_size" 2>/dev/null || echo "${img_size}B"))"
+      else
+        warn "Failed to backup images."
+      fi
+    else
+      info "No local images found to backup."
+    fi
+  fi
 
   local archive_name="${dir_name}-backup-${timestamp}.tar.gz"
   local archive_path="${PWD}/${archive_name}"
@@ -738,6 +787,24 @@ cmd_dir_restore() {
 
   ok "Restore finished. ${restored} volume(s) restored to ${project_dir}"
 
+  # Restore Docker images if present
+  local img_archive=""
+  if [[ -f "${project_dir}/images.tar.gz" ]]; then
+    img_archive="${project_dir}/images.tar.gz"
+  elif [[ -f "${PWD}/images.tar.gz" ]]; then
+    img_archive="${PWD}/images.tar.gz"
+  fi
+
+  if [[ -n "$img_archive" ]]; then
+    info "Found images archive: $(basename "$img_archive")"
+    info "Loading images into Docker..."
+    if gzip -dc "$img_archive" | docker load; then
+      ok "Images loaded successfully."
+    else
+      warn "Failed to load images from: $(basename "$img_archive")"
+    fi
+  fi
+
   echo ""
   read -r -p "Run '${_COMPOSE_CMD} up -d' now? [y/N] " reply
   if [[ "$reply" =~ ^[Yy]$ ]]; then
@@ -844,6 +911,7 @@ main() {
   local retain=0
   local force=false
   local auto_restart=false
+  local with_images=true
   local bundle=""
   local bundle_output=""
   local dir_target=""
@@ -925,6 +993,15 @@ main() {
           exit 1
         fi
         ;;
+      --no-images)
+        if [[ "$command" == "backup" ]]; then
+          with_images=false
+          shift
+        else
+          err "--no-images not supported for '$command'"
+          exit 1
+        fi
+        ;;
       --bundle)
         if [[ "$command" == "vol-backup" ]]; then
           bundle=true
@@ -999,7 +1076,7 @@ main() {
 
   case "$command" in
     backup)
-      cmd_dir_backup "$dir_target" "$auto_restart"
+      cmd_dir_backup "$dir_target" "$auto_restart" "$with_images"
       ;;
     restore)
       cmd_dir_restore "$dir_target"

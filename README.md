@@ -34,7 +34,7 @@ Container Transfer Tool — backup, restore, and migrate entire Docker Compose p
 
 ### Features
 
-- **Backup** — backup a project directory + all Docker Compose volumes into a single archive
+- **Backup** — backup a project directory + all Docker Compose volumes + images (default) into a single archive
 - **Restore** — restore project archive to current directory + restore all volumes
 - **Vol Backup** — backup all (or specific) named volumes from compose file
 - **Vol Restore** — restore volumes from backup archive, with confirmation prompt
@@ -114,10 +114,16 @@ ctool --version
 
 #### Backup
 
-Backup a project directory + all docker-compose volumes into a single archive.
+Backup a project directory + all docker-compose volumes + images into a single archive (default includes images, use `--no-images` to skip).
 
 ```bash
 ctool backup /path/to/project
+```
+
+Skip backing up Docker images to save space:
+
+```bash
+ctool backup /path/to/project --no-images
 ```
 
 If containers are running, a confirmation prompt will ask to stop them automatically. Use `--restart` to restart services after backup completes:
@@ -131,8 +137,9 @@ Workflow:
 2. Search for `docker-compose.yml` recursively (including subdirectories)
 3. Check containers — if running, confirm auto-stop (or abort if declined)
 4. Backup all named volumes to `volumes/` folder (temporary)
-5. Archive all project files + `volumes/` folder → `{dir-name}-backup-{timestamp}.tar.gz`
-6. Output saved to current working directory
+5. Backup service Docker images to `images.tar.gz` (unless `--no-images`)
+6. Archive all project files + `volumes/` + `images.tar.gz` → `{dir-name}-backup-{timestamp}.tar.gz`
+7. Output saved to current working directory
 
 Output:
 ```
@@ -140,8 +147,10 @@ Output:
 ℹ Copying project files...
 ℹ Backing up volume: postgres_data
 ✓ Volume backup: postgres_data.tar.gz
+ℹ Backing up Docker images (2 image(s))...
+✓ Images backup complete: images.tar.gz (450M)
 ℹ Creating archive: my-project-backup-20250709-120000.tar.gz
-✓ Backup created: .../my-project-backup-20250709-120000.tar.gz (1.2M)
+✓ Backup created: .../my-project-backup-20250709-120000.tar.gz (451M)
 ```
 
 Archive structure:
@@ -150,6 +159,7 @@ my-project-backup-20250709-120000.tar.gz
 └── my-project/
     ├── docker-compose.yml
     ├── ... (all project files)
+    ├── images.tar.gz
     └── volumes/
         ├── postgres_data.tar.gz
         └── redis_data.tar.gz
@@ -170,7 +180,8 @@ Workflow:
 3. Detect compose file in extracted project
 4. Map each compose key to the correct Docker volume name for the target server (via `docker compose config`)
 5. Restore each docker volume from `.tar.gz` files in `volumes/` to the correct Docker volume name
-6. Done — offer automatic `docker compose up -d`, or manual
+6. Load Docker images into Docker daemon if `images.tar.gz` is present
+7. Done — offer automatic `docker compose up -d`, or manual
 
 > **Why this matters:** Docker Compose prefixes volume names based on the project directory name. If the directory differs between source and destination servers (e.g. `myapp` → `myapp-clone`), Docker creates new volumes and restored data is not picked up. CTool automatically maps compose keys to the correct volume name on the target server.
 
@@ -396,6 +407,7 @@ ctool backup /path/to/project
   │     └── Stopped → proceed
   ├── Copy all project files to staging area
   ├── Backup named volumes to staging/volumes/
+  ├── Backup Docker images to staging/images.tar.gz (unless --no-images)
   ├── Archive staging + compress → {name}-backup-{timestamp}.tar.gz
   └── Save to current directory
 ```
@@ -410,6 +422,7 @@ ctool restore archive.tar.gz
   ├── Map compose key → Docker volume name for target server
   ├── For each .tar.gz in volumes/:
   │     └── docker run alpine tar xzf → restore to correct volume name
+  ├── If images.tar.gz exists → gzip -dc | docker load
   └── Done — offer "${_COMPOSE_CMD} up -d" immediately, or manual
 ```
 
@@ -660,7 +673,7 @@ MIT
 
 ### Fitur
 
-- **Backup** — backup satu direktori project + seluruh volume Docker Compose jadi satu archive
+- **Backup** — backup satu direktori project + seluruh volume Docker Compose + image (default) jadi satu archive
 - **Restore** — restore archive project ke current directory + restore semua volume
 - **Vol Backup** — backup semua (atau spesifik) named volume dari compose file
 - **Vol Restore** — restore volume dari archive backup, lengkap dengan konfirmasi
@@ -740,10 +753,16 @@ ctool --version
 
 #### Backup
 
-Backup satu direktori project + seluruh volume docker-compose menjadi satu archive.
+Backup satu direktori project + seluruh volume docker-compose + image ke dalam satu archive (secara default image disertakan, gunakan `--no-images` untuk lewati).
 
 ```bash
 ctool backup /path/to/project
+```
+
+Lewati backup Docker image untuk menghemat storage:
+
+```bash
+ctool backup /path/to/project --no-images
 ```
 
 Jika container masih berjalan, akan muncul konfirmasi untuk stop otomatis. Gunakan `--restart` untuk menyalakan ulang services setelah backup selesai:
@@ -757,8 +776,9 @@ Alur:
 2. Cari `docker-compose.yml` secara recursive di dalamnya (termasuk sub-direktori)
 3. Cek container — jika masih berjalan, konfirmasi auto-stop (atau batal jika tidak setuju)
 4. Backup semua named volume ke folder `volumes/` (sementara)
-5. Archive seluruh file project + folder `volumes/` → `{nama-dir}-backup-{timestamp}.tar.gz`
-6. Hasil disimpan di current working directory
+5. Backup Docker images service ke `images.tar.gz` (kecuali `--no-images`)
+6. Archive seluruh file project + folder `volumes/` + `images.tar.gz` → `{nama-dir}-backup-{timestamp}.tar.gz`
+7. Hasil disimpan di current working directory
 
 Output:
 ```
@@ -766,8 +786,10 @@ Output:
 ℹ Copying project files...
 ℹ Backing up volume: postgres_data
 ✓ Volume backup: postgres_data.tar.gz
+ℹ Backing up Docker images (2 image(s))...
+✓ Images backup complete: images.tar.gz (450M)
 ℹ Creating archive: my-project-backup-20250709-120000.tar.gz
-✓ Backup created: .../my-project-backup-20250709-120000.tar.gz (1.2M)
+✓ Backup created: .../my-project-backup-20250709-120000.tar.gz (451M)
 ```
 
 Archive structure:
@@ -776,6 +798,7 @@ my-project-backup-20250709-120000.tar.gz
 └── my-project/
     ├── docker-compose.yml
     ├── ... (semua file project)
+    ├── images.tar.gz
     └── volumes/
         ├── postgres_data.tar.gz
         └── redis_data.tar.gz
@@ -796,7 +819,8 @@ Alur:
 3. Deteksi compose file di project hasil extract
 4. Mapping tiap compose key ke Docker volume name yang benar untuk server target (via `docker compose config`)
 5. Restore setiap volume docker dari file `.tar.gz` di `volumes/` ke Docker volume name yang sesuai
-6. Selesai — tawarkan `docker compose up -d` otomatis, atau manual
+6. Load Docker images ke daemon Docker jika ada file `images.tar.gz`
+7. Selesai — tawarkan `docker compose up -d` otomatis, atau manual
 
 > **Kenapa ini penting?** Docker Compose memberi prefix nama volume berdasarkan nama direktori project. Jika direktori berbeda antara server sumber dan tujuan (misal `myapp` → `myapp-clone`), Docker akan membuat volume baru dan data restore tidak terbaca. CTool otomatis memetakan compose key ke nama volume yang benar di server target.
 
@@ -1021,7 +1045,8 @@ ctool backup /path/to/project
   │     ├── Running → konfirmasi auto-stop (Y → down, N → batal)
   │     └── Stopped → lanjut
   ├── Copy semua file project ke staging area
-  ├── Backup named volumes ke staging/volumes/
+  ├── Backup named volume ke staging/volumes/
+  ├── Backup Docker images ke staging/images.tar.gz (kecuali --no-images)
   ├── Archive staging + compress → {nama}-backup-{timestamp}.tar.gz
   └── Simpan di current directory
 ```
@@ -1036,6 +1061,7 @@ ctool restore archive.tar.gz
   ├── Mapping compose key → Docker volume name untuk server target
   ├── Untuk setiap .tar.gz di volumes/:
   │     └── docker run alpine tar xzf → restore ke volume name yg benar
+  ├── Jika ada images.tar.gz → gzip -dc | docker load
   └── Selesai — tawarkan "${_COMPOSE_CMD} up -d" langsung, atau manual
 ```
 
